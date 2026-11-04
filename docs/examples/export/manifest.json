@@ -1,0 +1,70 @@
+{
+  "files": [
+    {
+      "bytes": 91296,
+      "colors": null,
+      "name": "panel_01.png",
+      "over_budget": false
+    },
+    {
+      "bytes": 87327,
+      "colors": null,
+      "name": "panel_02.png",
+      "over_budget": false
+    },
+    {
+      "bytes": 88860,
+      "colors": null,
+      "name": "panel_03.png",
+      "over_budget": false
+    },
+    {
+      "bytes": 79296,
+      "colors": null,
+      "name": "panel_04.png",
+      "over_budget": false
+    }
+  ],
+  "panels": [
+    {
+      "height": 338,
+      "width": 150,
+      "x": 0
+    },
+    {
+      "height": 338,
+      "width": 150,
+      "x": 150
+    },
+    {
+      "height": 338,
+      "width": 150,
+      "x": 300
+    },
+    {
+      "height": 338,
+      "width": 150,
+      "x": 450
+    }
+  ],
+  "settings": {
+    "auto_compress": false,
+    "brightness": 0.0,
+    "colors": 128,
+    "contrast": 1.0,
+    "dither": "Sierra",
+    "duration": 1.0,
+    "format": "Png",
+    "fps": 20,
+    "gap": 0,
+    "height": 338,
+    "invert": false,
+    "layout": "Strip4",
+    "monochrome": false,
+    "panel_width": 150,
+    "sepia": false,
+    "start": 0.0,
+    "target_mb": 5.0,
+    "workshop_patch": false
+  }
+}

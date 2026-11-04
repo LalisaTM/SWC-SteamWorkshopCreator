@@ -10,6 +10,39 @@ Native Rust-Desktop-App zum Zuschneiden von Videos, GIFs und Bildern für Steam-
 
 Die aktuelle Windows-x64-EXE steht unter **[GitHub Releases](https://github.com/LalisaTM/SWC-SteamWorkshopCreator/releases/latest)** bereit. `SWC-SteamWorkshopCreator-windows-x64.exe` herunterladen und starten. Keine separate FFmpeg-Installation erforderlich. Es ist eine portable Anwendung ohne Installer und ohne Konsolenfenster.
 
+## Screenshots
+
+Die folgenden Aufnahmen zeigen die echte Windows-App mit der Beispielvorlage „Katze ärgert Nachtelfen-Schurken im Burghof“. Das [Beispielbild](docs/examples/katze-burghof.png) wurde für diese Dokumentation bereitgestellt. Es handelt sich um ein Standbild; deshalb zeigt das Beispiel einen PNG-Export.
+
+### Medienpool und Vorschau
+
+Das Bild wird links in den Medienpool importiert. Rechts sind vier Streifen mit jeweils **150 × 338 Pixeln** eingestellt. In der Mitte zeigt die Vorschau die Aufteilung des Motivs.
+
+![Importiertes Katzenbild im Medienpool mit Vorschau der vier Panels](docs/screenshots/01-import-vorschau.png)
+
+### Effekte direkt in der Vorschau
+
+Hier ist der Schwarzweiß-Effekt aktiviert. Die Quelldatei im Medienpool bleibt unverändert; die Vorschau zeigt den Effekt auf den Panels.
+
+![Schwarzweiß-Vorschau des Beispielbilds mit sichtbaren Effektreglern](docs/screenshots/02-schwarzweiss-effekt.png)
+
+### Export und gemessene Dateigrößen
+
+Für diesen Export ist Schwarzweiß wieder deaktiviert. Nach dem Speichern zeigt die App die tatsächlich erzeugte Dateigröße für jedes der vier PNG-Panels an.
+
+![Abgeschlossener PNG-Export mit vier einzelnen Dateigrößen unter der Vorschau](docs/screenshots/03-export-dateigroessen.png)
+
+Die erzeugten Dateien liegen unter [docs/examples/export](docs/examples/export). Von links nach rechts ergeben sie wieder das zugeschnittene Motiv:
+
+<p>
+  <img src="docs/examples/export/panel_01.png" width="150" alt="Exportiertes Panel 1: linke Burgmauer und Katze">
+  <img src="docs/examples/export/panel_02.png" width="150" alt="Exportiertes Panel 2: Katze und ausgestreckte Pfote">
+  <img src="docs/examples/export/panel_03.png" width="150" alt="Exportiertes Panel 3: Nachtelf und Rüstung">
+  <img src="docs/examples/export/panel_04.png" width="150" alt="Exportiertes Panel 4: Nachtelf und rechte Burgmauer">
+</p>
+
+Die [Export-Einstellungen und Dateigrößen](docs/examples/export/manifest.json) sind ebenfalls enthalten. Die Screenshots zeigen den lokalen Editor und keinen bereits auf Steam veröffentlichten Showcase.
+
 ## Automatische Updates
 
 Beim Start prüft die App im Hintergrund die neueste stabile GitHub-Release. Ein manueller Check ist oben über „Nach Updates suchen“ möglich. Liegt eine neuere Version vor, erscheint „Update installieren & neu starten“. Dieser Klick lädt die Release-EXE, prüft die SHA-256-Prüfsumme und ersetzt die bisherige Anwendung. Die App speichert ihre Einstellungen, schließt und startet die neue Version. Während eines Exports ist die Installation gesperrt.
