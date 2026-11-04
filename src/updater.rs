@@ -288,4 +288,52 @@ mod tests {
                 .ends_with(b"SWC-update-smoke-test")
         );
     }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "Downloads the current public release; run manually after publishing"]
+    fn github_release_updates_isolated_copy() {
+        let release: Release = client()
+            .unwrap()
+            .get(API)
+            .send()
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .unwrap();
+        let update = select_update(release, "0.0.0")
+            .unwrap()
+            .expect("A public release must exist");
+        if std::env::var_os("SWC_TEST_GITHUB_UPDATE").is_some() {
+            install(&update, |_, _| {}).unwrap();
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let original = temp.path().join("isolated-swc.exe");
+        fs::copy(std::env::current_exe().unwrap(), &original).unwrap();
+        let mut command = std::process::Command::new(&original);
+        use std::os::windows::process::CommandExt;
+        let status = command
+            .creation_flags(0x08000000)
+            .args([
+                "--exact",
+                "updater::tests::github_release_updates_isolated_copy",
+                "--ignored",
+            ])
+            .env("SWC_TEST_GITHUB_UPDATE", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let hash = client()
+            .unwrap()
+            .get(update.checksum_url)
+            .send()
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .text()
+            .unwrap();
+        verify(&original, &checksum(&hash).unwrap()).unwrap();
+    }
 }
