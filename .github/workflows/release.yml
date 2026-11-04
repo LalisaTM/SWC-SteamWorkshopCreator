@@ -1,0 +1,63 @@
+name: Windows Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: vendor/ffmpeg
+          key: ffmpeg-9.0.2-60f467265b1e
+      - name: Tag und Paketversion prüfen
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or $env:GITHUB_REF_NAME -ne "v$version") {
+            throw 'Release nur von einem Tag v<Versionsnummer> passend zu Cargo.toml starten.'
+          }
+      - name: FFmpeg und Testmedien vorbereiten
+        shell: pwsh
+        run: |
+          ./scripts/prepare-ffmpeg.ps1
+          Expand-Archive vendor/ffmpeg/ffmpeg-9.0.2-essentials_build.zip target/ffmpeg-test -Force
+          Add-Content $env:GITHUB_PATH "$pwd/target/ffmpeg-test/ffmpeg-9.0.2-essentials_build/bin"
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+      - name: Release-Dateien und SHA-256 vorbereiten
+        shell: pwsh
+        run: ./scripts/package-release.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SWC-windows-x64
+          path: dist/*
+      - name: GitHub Release veröffentlichen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --title "SWC $env:GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md --verify-tag
+            if ($LASTEXITCODE -ne 0) { throw 'Release konnte nicht erstellt werden.' }
+          }
+          gh release upload $env:GITHUB_REF_NAME dist/* --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Release-Upload fehlgeschlagen.' }
