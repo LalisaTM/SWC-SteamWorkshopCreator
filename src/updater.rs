@@ -305,6 +305,11 @@ mod tests {
         let update = select_update(release, "0.0.0")
             .unwrap()
             .expect("A public release must exist");
+        assert_eq!(
+            update.version.to_string(),
+            env!("CARGO_PKG_VERSION"),
+            "The public updater endpoint must serve the version being verified"
+        );
         if std::env::var_os("SWC_TEST_GITHUB_UPDATE").is_some() {
             install(&update, |_, _| {}).unwrap();
             return;
