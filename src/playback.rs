@@ -12,9 +12,9 @@ impl Playback {
         let (tx, rx) = mpsc::sync_channel(2);
         let cancel = Arc::new(AtomicBool::new(false));
         let stopped = cancel.clone();
-        let interval = Duration::from_secs_f64(1. / settings.fps.min(24) as f64);
+        let interval = Duration::from_secs_f64(1. / settings.fps.clamp(1, 24) as f64);
         std::thread::spawn(move || {
-            let result = core::preview_stream(&input, &settings, &stopped, |bytes, size| {
+            let result = core::source_preview_stream(&input, &settings, &stopped, |bytes, size| {
                 let mut message = Ok(egui::ColorImage::from_rgba_unmultiplied(size, &bytes));
                 loop {
                     match tx.try_send(message) {

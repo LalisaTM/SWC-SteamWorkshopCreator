@@ -1,6 +1,11 @@
 #![cfg_attr(all(windows, not(feature = "console")), windows_subsystem = "windows")]
 
+mod color_editor;
+mod history;
 mod playback;
+mod size_analysis;
+mod snapping;
+mod transform_editor;
 mod ui;
 use clap::Parser;
 use eframe::egui;
@@ -51,6 +56,14 @@ enum Action {
         colors: u32,
         #[arg(long, value_enum, default_value = "sierra")]
         dither: Dither,
+        #[arg(long, default_value_t = 0.)]
+        offset_x: f32,
+        #[arg(long, default_value_t = 0.)]
+        offset_y: f32,
+        #[arg(long, default_value_t = 1.)]
+        scale: f32,
+        #[arg(long, default_value_t = 0.)]
+        rotation: f32,
         #[arg(long)]
         monochrome: bool,
         #[arg(long)]
@@ -72,10 +85,20 @@ fn main() -> anyhow::Result<()> {
         colors,
         dither,
         monochrome,
+        offset_x,
+        offset_y,
+        scale,
+        rotation,
         workshop_patch,
     }) = Cli::parse().command
     {
         let settings = Settings {
+            transform: Transform {
+                x: offset_x,
+                y: offset_y,
+                scale,
+                rotation,
+            },
             layout,
             format,
             panel_width: width,
@@ -125,17 +148,20 @@ enum Event {
     UpdateInstalled(Result<PathBuf, String>),
     Loaded(Result<Media, String>),
     PoolReady(PathBuf, Result<(Media, Vec<u8>), String>),
-    Measured(Result<Vec<ExportFile>, String>),
     Progress(usize, usize),
     Done(Result<Export, String>),
 }
 struct PoolItem {
+    transform: Transform,
     path: PathBuf,
     media: Option<Media>,
     thumbnail: Option<egui::TextureHandle>,
     error: Option<String>,
 }
 struct App {
+    color_editor: Option<color_editor::ColorEditor>,
+    editor: transform_editor::Editor,
+    history_action: i8,
     available_update: Option<core::updater::Update>,
     update_status: String,
     checking_update: bool,
@@ -146,8 +172,8 @@ struct App {
     playing: bool,
     startup: bool,
     preview_reload: Option<std::time::Instant>,
-    measured: Option<Vec<ExportFile>>,
-    measuring: bool,
+    analysis: size_analysis::Analysis,
+    history: history::History,
     settings: Settings,
     input: Option<PathBuf>,
     output: PathBuf,
@@ -162,8 +188,6 @@ struct App {
     status: String,
     progress: f32,
     result: Option<Export>,
-    preview_dirty: bool,
-    preview_settings: Settings,
     status_error: bool,
 }
 impl App {
@@ -194,6 +218,9 @@ impl App {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         Self {
+            color_editor: None,
+            editor: Default::default(),
+            history_action: 0,
             available_update: None,
             update_status: "Suche nach Updates …".into(),
             checking_update: true,
@@ -204,9 +231,8 @@ impl App {
             playing: true,
             startup: true,
             preview_reload: None,
-            measured: None,
-            measuring: false,
-            preview_settings: settings.clone(),
+            analysis: Default::default(),
+            history: Default::default(),
             settings,
             input: None,
             output: PathBuf::from("exports"),
@@ -218,11 +244,27 @@ impl App {
             busy: false,
             loading: false,
             cancel: Arc::new(AtomicBool::new(false)),
-            status: "Video, GIF oder Bild auswählen, um zu beginnen.".into(),
+            status: String::new(),
             progress: 0.,
             result: None,
-            preview_dirty: false,
             status_error: false,
+        }
+    }
+    fn settings_changed(&mut self, before: &Settings) {
+        self.analysis.invalidate();
+        self.result = None;
+        if before.start != self.settings.start
+            || before.duration != self.settings.duration
+            || before.fps != self.settings.fps
+            || before.format != self.settings.format
+            || before.monochrome != self.settings.monochrome
+            || before.sepia != self.settings.sepia
+            || before.invert != self.settings.invert
+            || before.brightness != self.settings.brightness
+            || before.contrast != self.settings.contrast
+            || before.color != self.settings.color
+        {
+            self.preview_reload = Some(std::time::Instant::now());
         }
     }
     fn check_updates(&mut self) {
@@ -258,11 +300,9 @@ impl App {
         self.loading = true;
         self.texture = None;
         self.media = None;
-        self.preview_dirty = false;
         self.preview_reload = None;
-        self.preview_settings = self.settings.clone();
         self.status_error = false;
-        self.measured = None;
+        self.analysis.invalidate();
         self.playback = Some(playback::Playback::new(
             input.clone(),
             self.settings.clone(),
@@ -283,6 +323,7 @@ impl App {
                 first = Some(path.clone());
             }
             self.pool.push(PoolItem {
+                transform: Transform::default(),
                 path: path.clone(),
                 media: None,
                 thumbnail: None,
@@ -313,35 +354,26 @@ impl App {
         }
     }
     fn select_media(&mut self, path: PathBuf) {
+        if let Some(current) = &self.input
+            && let Some(item) = self.pool.iter_mut().find(|p| &p.path == current)
+        {
+            item.transform = self.settings.transform;
+        }
+        self.settings.transform = self
+            .pool
+            .iter()
+            .find(|p| p.path == path)
+            .map(|p| p.transform)
+            .unwrap_or_default();
+        self.editor.selected = false;
+        self.history = Default::default();
         self.input = Some(path);
         self.settings.start = 0.;
         self.result = None;
         self.load();
     }
-    fn measure(&mut self) {
-        let Some(input) = self.input.clone() else {
-            return;
-        };
-        self.busy = true;
-        self.measuring = true;
-        self.progress = 0.;
-        self.measured = None;
-        self.status_error = false;
-        self.status = "Größenanalyse: Panels werden testweise codiert …".into();
-        self.cancel = Arc::new(AtomicBool::new(false));
-        let (settings, cancel, tx) = (self.settings.clone(), self.cancel.clone(), self.tx.clone());
-        std::thread::spawn(move || {
-            let result = (|| -> anyhow::Result<_> {
-                let tmp = tempfile::tempdir()?;
-                let export = export(&input, tmp.path(), &settings, &cancel, |n, t| {
-                    let _ = tx.send(Event::Progress(n, t));
-                })?;
-                Ok(export.files)
-            })();
-            let _ = tx.send(Event::Measured(result.map_err(|e| format!("{e:#}"))));
-        });
-    }
     fn generate(&mut self) {
+        self.analysis.cancel();
         let Some(input) = self.input.clone() else {
             return;
         };
@@ -421,7 +453,7 @@ impl eframe::App for App {
                                 }
                             }
                             self.media = Some(media);
-                            self.status = "Vorschau wird abgespielt.".into();
+                            self.status.clear();
                         }
                         Err(e) => {
                             self.status = e;
@@ -450,20 +482,6 @@ impl eframe::App for App {
                         }
                     }
                 }
-                Event::Measured(result) => {
-                    self.busy = false;
-                    self.measuring = false;
-                    match result {
-                        Ok(files) => {
-                            self.measured = Some(files);
-                            self.status="Größenanalyse fertig. Werte stammen aus einem vollständigen Testexport.".into();
-                        }
-                        Err(e) => {
-                            self.status = e;
-                            self.status_error = true;
-                        }
-                    }
-                }
                 Event::Progress(n, t) => self.progress = n as f32 / t as f32,
                 Event::Done(result) => {
                     self.busy = false;
@@ -484,7 +502,7 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
             self.startup = false;
         }
-        if !self.busy && !self.loading {
+        if !self.busy && !self.loading && self.color_editor.is_none() {
             let dropped = ctx.input(|i| {
                 i.raw
                     .dropped_files
@@ -512,7 +530,133 @@ impl eframe::App for App {
                 _ => {}
             }
         }
+        if ctx.input(|i| i.pointer.any_pressed()) {
+            self.history.finish();
+        }
+        let before = self.settings.clone();
+        if !self.busy && self.color_editor.is_none() && !ctx.wants_keyboard_input() {
+            let (undo, redo) = ctx.input_mut(|i| {
+                let redo = i.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::Z,
+                ) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Y);
+                let undo = !redo && i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z);
+                (undo, redo)
+            });
+            if undo {
+                self.history.undo(&mut self.settings);
+            }
+            if redo {
+                self.history.redo(&mut self.settings);
+            }
+            if self.editor.selected && !self.editor.dragging() {
+                let step = if ctx.input(|i| i.modifiers.shift) {
+                    10.
+                } else {
+                    1.
+                };
+                ctx.input_mut(|i| {
+                    if i.consume_key(
+                        if i.modifiers.shift {
+                            egui::Modifiers::SHIFT
+                        } else {
+                            egui::Modifiers::NONE
+                        },
+                        egui::Key::ArrowLeft,
+                    ) {
+                        self.settings.transform.x -= step;
+                    }
+                    if i.consume_key(
+                        if i.modifiers.shift {
+                            egui::Modifiers::SHIFT
+                        } else {
+                            egui::Modifiers::NONE
+                        },
+                        egui::Key::ArrowRight,
+                    ) {
+                        self.settings.transform.x += step;
+                    }
+                    if i.consume_key(
+                        if i.modifiers.shift {
+                            egui::Modifiers::SHIFT
+                        } else {
+                            egui::Modifiers::NONE
+                        },
+                        egui::Key::ArrowUp,
+                    ) {
+                        self.settings.transform.y -= step;
+                    }
+                    if i.consume_key(
+                        if i.modifiers.shift {
+                            egui::Modifiers::SHIFT
+                        } else {
+                            egui::Modifiers::NONE
+                        },
+                        egui::Key::ArrowDown,
+                    ) {
+                        self.settings.transform.y += step;
+                    }
+                });
+            }
+            if !undo && !redo && before != self.settings {
+                self.history.record(
+                    &before,
+                    &self.settings,
+                    ctx.input(|i| {
+                        i.key_down(egui::Key::ArrowLeft)
+                            || i.key_down(egui::Key::ArrowRight)
+                            || i.key_down(egui::Key::ArrowUp)
+                            || i.key_down(egui::Key::ArrowDown)
+                    }),
+                );
+            }
+            if before != self.settings {
+                self.settings_changed(&before);
+            }
+        }
+        let before_input = self.input.clone();
+        let before_ui = self.settings.clone();
         self.draw(ctx);
+        if let Some(editor) = &mut self.color_editor {
+            let outcome = editor.show(ctx);
+            if let Some(settings) = outcome.settings {
+                self.settings = settings;
+            }
+            if outcome.closed {
+                self.color_editor = None;
+                self.history.finish();
+            }
+        }
+        let active = ctx.input(|i| {
+            i.pointer.any_down()
+                || i.key_down(egui::Key::ArrowLeft)
+                || i.key_down(egui::Key::ArrowRight)
+                || i.key_down(egui::Key::ArrowUp)
+                || i.key_down(egui::Key::ArrowDown)
+        }) || ctx.wants_keyboard_input();
+        if self.history_action != 0 {
+            if self.history_action < 0 {
+                self.history.undo(&mut self.settings);
+            } else {
+                self.history.redo(&mut self.settings);
+            }
+            self.history_action = 0;
+        } else if before_input == self.input {
+            self.history.record(&before_ui, &self.settings, active);
+        }
+        if before_ui != self.settings {
+            self.settings_changed(&before_ui);
+        }
+        self.analysis.tick(
+            self.input.as_deref(),
+            &self.settings,
+            !self.busy
+                && !self.loading
+                && !self.editor.dragging()
+                && self.color_editor.is_none()
+                && !ctx.input(|i| i.pointer.any_down())
+                && self.preview_reload.is_none(),
+        );
         if !self.busy
             && !self.loading
             && self.input.is_some()
@@ -522,7 +666,12 @@ impl eframe::App for App {
         {
             self.load();
         }
-        if self.busy || self.loading || self.checking_update || self.playback.is_some() {
+        if self.busy
+            || self.loading
+            || self.checking_update
+            || self.playback.is_some()
+            || self.analysis.pending()
+        {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
     }

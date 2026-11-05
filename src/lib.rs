@@ -1,8 +1,11 @@
 use anyhow::{Context, Result, bail, ensure};
 #[cfg(windows)]
 mod bundled_tools;
+pub mod color;
+pub mod transform;
 pub mod updater;
 use clap::ValueEnum;
+pub use color::ColorAdjustments;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -16,6 +19,7 @@ use std::{
     thread,
     time::Duration,
 };
+pub use transform::Transform;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 pub enum Layout {
@@ -65,9 +69,11 @@ impl Dither {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub color: ColorAdjustments,
+    pub transform: Transform,
     pub layout: Layout,
     pub format: Format,
     pub panel_width: u32,
@@ -90,6 +96,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            color: ColorAdjustments::default(),
+            transform: Transform::default(),
             layout: Layout::Workshop5,
             format: Format::Gif,
             panel_width: 150,
@@ -119,6 +127,8 @@ pub struct Panel {
 }
 impl Settings {
     pub fn panels(&self) -> Result<Vec<Panel>> {
+        self.transform.validate()?;
+        self.color.validate()?;
         ensure!(
             (1..=4096).contains(&self.panel_width) && (1..=8192).contains(&self.height),
             "Breite: 1–4096, Höhe: 1–8192 erforderlich"
@@ -169,12 +179,12 @@ impl Settings {
         Ok(p.x + p.width)
     }
     pub fn effects_filter(&self) -> String {
-        let mut f = String::new();
-        if self.brightness != 0. || self.contrast != 1. {
-            f = format!(
-                ",eq=brightness={}:contrast={}",
-                self.brightness, self.contrast
-            );
+        let mut f = self.color.filter();
+        if self.brightness != 0. || self.contrast != 1. || self.color.saturation != 1. {
+            f.push_str(&format!(
+                ",eq=brightness={}:contrast={}:saturation={}",
+                self.brightness, self.contrast, self.color.saturation
+            ));
         }
         if self.sepia {
             f.push_str(",colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131");
@@ -187,13 +197,26 @@ impl Settings {
         }
         f
     }
-    fn base_filter(&self) -> Result<String> {
+    fn base_filter(&self, media: &Media) -> Result<String> {
+        let w = self.canvas_width()?;
+        let h = self.height;
+        let size = self.transform.dimensions(
+            [media.width as f32, media.height as f32],
+            [w as f32, h as f32],
+        );
+        let angle = self.transform.rotation.to_radians();
+        let (sin, cos) = angle.sin_cos();
+        let rw = (size[0] * cos.abs() + size[1] * sin.abs()).ceil();
+        let rh = (size[0] * sin.abs() + size[1] * cos.abs()).ceil();
+        let pw = rw.max(w as f32) + 2. * self.transform.x.abs().ceil();
+        let ph = rh.max(h as f32) + 2. * self.transform.y.abs().ceil();
+        ensure!(
+            pw <= 32768. && ph <= 32768. && pw * ph <= 64_000_000.,
+            "Transformation benötigt zu viel Bildspeicher. Größe, Skalierung oder Abstand reduzieren."
+        );
         Ok(format!(
-            "scale={}:{}:force_original_aspect_ratio=increase:flags=lanczos,crop={}:{},setsar=1",
-            self.canvas_width()?,
-            self.height,
-            self.canvas_width()?,
-            self.height
+            "scale={}:{}:flags=lanczos,format=rgba,rotate={angle}:ow={rw}:oh={rh}:c=black,pad={pw}:{ph}:(ow-iw)/2+{}:(oh-ih)/2+{}:color=black,crop={w}:{h}:(iw-{w})/2:(ih-{h})/2,setsar=1",
+            size[0], size[1], self.transform.x, self.transform.y
         ))
     }
 }
@@ -245,15 +268,16 @@ pub fn probe(input: &Path) -> Result<Media> {
     })
 }
 pub fn thumbnail(input: &Path, settings: &Settings) -> Result<Vec<u8>> {
+    let media = probe(input)?;
     let out = command("ffmpeg")?
         .args(["-v", "error", "-ss", &settings.start.to_string(), "-i"])
         .arg(input)
         .args([
             "-vf",
             &format!(
-                "{}{},scale=800:800:force_original_aspect_ratio=decrease",
-                settings.base_filter()?,
-                settings.effects_filter()
+                "format=rgba{},{},scale=800:800:force_original_aspect_ratio=decrease",
+                settings.effects_filter(),
+                settings.base_filter(&media)?
             ),
             "-frames:v",
             "1",
@@ -278,14 +302,41 @@ pub fn preview_stream(
     input: &Path,
     settings: &Settings,
     cancel: &Cancel,
+    frame: impl FnMut(Vec<u8>, [usize; 2]) -> bool,
+) -> Result<()> {
+    stream(input, settings, cancel, false, frame)
+}
+pub fn source_preview_stream(
+    input: &Path,
+    settings: &Settings,
+    cancel: &Cancel,
+    frame: impl FnMut(Vec<u8>, [usize; 2]) -> bool,
+) -> Result<()> {
+    stream(input, settings, cancel, true, frame)
+}
+fn stream(
+    input: &Path,
+    settings: &Settings,
+    cancel: &Cancel,
+    source: bool,
     mut frame: impl FnMut(Vec<u8>, [usize; 2]) -> bool,
 ) -> Result<()> {
+    settings.panels()?;
     let media = probe(input)?;
-    let width = settings.canvas_width()? as f64;
-    let scale = (640.0 / width).min(480.0 / settings.height as f64).min(1.0);
+    let width = if source {
+        media.width
+    } else {
+        settings.canvas_width()?
+    } as f64;
+    let height = if source {
+        media.height
+    } else {
+        settings.height
+    } as f64;
+    let scale = (960.0 / width).min(720.0 / height).min(1.0);
     let size = [
         (width * scale).round().max(1.) as usize,
-        (settings.height as f64 * scale).round().max(1.) as usize,
+        (height * scale).round().max(1.) as usize,
     ];
     let duration = media
         .duration
@@ -297,10 +348,17 @@ pub fn preview_stream(
             return Ok(());
         }
         let mut log = tempfile::tempfile()?;
+        let content = if source {
+            format!("setsar=1,format=rgba{}", settings.effects_filter())
+        } else {
+            format!(
+                "format=rgba{},{}",
+                settings.effects_filter(),
+                settings.base_filter(&media)?
+            )
+        };
         let filter = format!(
-            "{}{},scale={}:{},fps={}",
-            settings.base_filter()?,
-            settings.effects_filter(),
+            "{content},scale={}:{},fps={}",
             size[0],
             size[1],
             settings.fps.min(24)
@@ -439,12 +497,12 @@ pub fn export(
         let name = format!("panel_{:02}.{ext}", i + 1);
         let path = staging.path().join(&name);
         let crop = format!(
-            "{},crop={}:{}:{}:0{}",
-            settings.base_filter()?,
+            "format=rgba{},{},crop={}:{}:{}:0",
+            settings.effects_filter(),
+            settings.base_filter(&media)?,
             p.width,
             p.height,
-            p.x,
-            settings.effects_filter()
+            p.x
         );
         let mut palette_colors = settings.colors;
         loop {

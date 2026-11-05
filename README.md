@@ -74,15 +74,41 @@ Die Höhe ist frei wählbar (bis 8192 px). Das Motiv wird proportional auf die g
 
 Die Artwork-Maße stammen aus dem verlinkten [Steam-Community-Guide](https://steamcommunity.com/sharedfiles/filedetails/?id=748624905). Der Export ersetzt den dort beschriebenen manuellen Upload nicht. Vier Streifen werden technisch unterstützt; ein passendes Steam-Showcase mit genau vier gleichwertigen Slots ist damit nicht zugesichert. Es gibt keinen automatischen Steam-Upload.
 
+## Motiv verschieben, skalieren und drehen
+
+Die gemeinsame Panel- und Bearbeitungsansicht zeigt das aktive Bild, Video oder GIF mit den Panelgrenzen. Das Motiv lässt sich darin direkt auswählen und transformieren:
+
+- Motiv anklicken: Auswahlrahmen und Griffe anzeigen.
+- Im Motiv ziehen: Position verändern. Mit **Shift** bleibt die Bewegung auf einer Achse.
+- Einen Eckgriff ziehen: proportional vergrößern oder verkleinern; die gegenüberliegende Ecke bleibt fest.
+- Den runden Griff oberhalb des Rahmens ziehen: um die Motivmitte drehen. Mit **Shift** rastet die Drehung in 15°-Schritten ein.
+- **Escape** während des Ziehens: die laufende Änderung zurücknehmen.
+- **Strg+Z**: rückgängig; **Strg+Y** oder **Strg+Shift+Z**: wiederholen. Ein Ziehvorgang zählt als ein Schritt. Die Befehle gelten auch für Effekte und Exportvorgaben.
+- **Pfeiltasten** bei ausgewähltem Motiv: um einen Ausgabepixel verschieben; **Shift+Pfeiltaste**: zehn Pixel.
+
+Rechts unter **Transformieren** sind Position X/Y in Ausgabepixeln, Skalierung von 5 bis 400 % und Drehung von −180 bis 180° auch numerisch einstellbar. **Transformation zurücksetzen** stellt die mittige Ausgangsposition bei 100 % ohne Drehung wieder her. Die Ausgangsgröße füllt die gesamte Showcase-Fläche proportional aus; ein überstehender Teil des Motivs wird beim Export abgeschnitten. Sichtbar freigelegte Flächen bleiben schwarz.
+
+Das **Mausrad** zoomt um den Mauszeiger; **Ansicht +/−** und **Einpassen** steuern ebenfalls nur die Editoransicht. Mit gedrückter **mittlerer Maustaste** lässt sich die Ansicht verschieben. Bearbeitung und Panelgrenzen bleiben dabei in derselben Ansicht. Auswahlrahmen und Hilfslinien werden nicht exportiert. Die Regler und Griffe reagieren direkt, auch wenn die Wiedergabe pausiert ist. Effekte und Zeitraum werden weiterhin im Hintergrund für die Vorschau vorbereitet.
+
+Transformationen werden während der Sitzung pro Medium im Medienpool behalten. Die übrigen Export- und Effektvorgaben bleiben gemeinsame Einstellungen. Der Export und die Größenanalyse verwenden die aktuelle Transformation; zuvor berechnete Größen werden nach einer Änderung verworfen. Es handelt sich um eine feste Transformation für den gesamten Ausschnitt, ohne Keyframes.
+
+Auch die Kommandozeile unterstützt die Transformation. `--scale 0.75` entspricht 75 %:
+
+```powershell
+cargo run --features console -- export docs/examples/katze-burghof.png --layout strip4 --format png --height 338 --offset-x 20 --offset-y=-10 --scale 0.75 --rotation 15
+```
+
 GIF-Export unterstützt Zeitraum, FPS, Farbpalette, vier Dither-Verfahren und Schwarzweiß. PNG exportiert das erste Bild am Startzeitpunkt. Dateien über 5.000.000 Bytes werden markiert. Die Kompressionspresets Klein, Balance und Qualität setzen FPS, Farben und Dithering. Die optionale Zielgrößen-Automatik reduziert die Palette pro GIF bis auf vier Farben. Reicht das nicht, wird der Export mit einem Hinweis abgebrochen und aufgeräumt; dann FPS, Höhe oder Dauer reduzieren. Die Auflösung wird nicht automatisch verändert. Videos und GIFs dürfen mit dem gewählten Zeitraum nicht über ihr Ende hinausreichen. Statische Bilder können ebenfalls als GIF exportiert werden, ergeben dabei ein Einzelbild.
 
 Der optionale experimentelle Workshop-Patch ersetzt das letzte GIF-Byte durch `0x21`, entsprechend dem Verfahren des Referenzprojekts. Er ist standardmäßig deaktiviert, weil er den normalen GIF-Trailer verändert. Community-Uploadverfahren können sich ändern; ein erfolgreicher Steam-Upload ist nicht lokal getestet.
 
 ## Effekte und Größenanalyse
 
-Schwarzweiß, Sepia, invertierte Farben, Helligkeit und Kontrast werden sowohl in der animierten Vorschau als auch beim Export angewendet. Die Einstellungen gelten für das aktive Medium; beim Wechsel bleiben sie als gemeinsame Exportvorgaben erhalten. Die Vorschau zeigt die Effekte, jedoch nicht die GIF-Palettenquantisierung.
+Unter **Effekte → Farbkorrektur …** öffnet sich ein separates Fenster mit Vorschau, RGB-Histogramm und Originalvergleich. Temperatur, Tönung, Belichtung, Kontrast, Lichter, Tiefen, Helligkeit und Sättigung sowie Schwarzweiß, Sepia und invertierte Farben lassen sich dort einstellen. Bei Videos und GIFs zeigt der Farbkorrektur-Editor ein Standbild an der gewählten Startzeit. **Übernehmen** wendet die Korrektur als einen rückgängig machbaren Schritt an; **Abbrechen**, Escape oder Schließen verwerfen sie. Vorschau und Export verwenden dieselbe Farbverarbeitung. Die Einstellungen bleiben beim Medienwechsel als gemeinsame Exportvorgaben erhalten. Die Vorschau zeigt keine GIF-Palettenquantisierung.
 
-**Größen berechnen** codiert alle Panels mit den aktuellen Einstellungen in einem temporären Ordner und zeigt die gemessenen Größen pro Datei vor dem endgültigen Export. Der Testexport kann abgebrochen werden und wird automatisch entfernt. Änderungen an Quelle oder Einstellungen verwerfen die Werte. Die Analyse kann genauso lange dauern wie ein Export. Der endgültige Export zeigt die tatsächlich geschriebenen Größen erneut an.
+**Snapping** in der Vorschau richtet das bewegte Motiv an Panelkanten, Panelmitten sowie Kanten und Mitte der gesamten Fläche aus. Türkise Hilfslinien markieren die Ausrichtung. **Alt** schaltet Snapping beim Ziehen vorübergehend aus; der Schalter in der Werkzeugleiste deaktiviert es dauerhaft für die Sitzung. **Shift** beschränkt die Bewegung weiterhin auf eine Achse.
+
+Die Dateigrößen werden nach einer kurzen Bearbeitungspause automatisch im Hintergrund berechnet. Dazu codiert die App alle Panels mit den aktuellen Einstellungen in einem temporären Ordner. Weitere Änderungen brechen die alte Analyse ab; verspätete Ergebnisse werden verworfen. Die Oberfläche bleibt bedienbar. Die Analyse kann genauso lange dauern wie ein Export. Ihre temporären Dateien werden anschließend entfernt. Der endgültige Export zeigt die tatsächlich geschriebenen Größen erneut an.
 
 Das neue Icon ist als Fenstericon und Windows-EXE-Ressource eingebettet. Für Windows-Builds wird der Resource Compiler aus den Visual Studio Build Tools benötigt.
 
